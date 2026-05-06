@@ -7,6 +7,9 @@ import 'package:flutter_inappwebview/flutter_inappwebview.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:permission_handler/permission_handler.dart';
+import 'package:printing/printing.dart';
+import 'package:pdf/pdf.dart';
+import 'dart:collection';
 
 class WebViewScreen extends StatefulWidget {
   const WebViewScreen({super.key});
@@ -45,12 +48,15 @@ class _WebViewScreenState extends State<WebViewScreen> {
         if (didPop) return;
 
         if (webViewController != null) {
-          if (await webViewController!.canGoBack()) {
-            await webViewController!.goBack();
-            return;
-          }
+          // Execute the Angular back hook
+          await webViewController!.evaluateJavascript(source: '''
+            if (window.triggerAppBack) {
+              window.triggerAppBack();
+            } else {
+              window.history.back();
+            }
+          ''');
         }
-        SystemNavigator.pop();
       },
       child: Scaffold(
         backgroundColor: Colors.white,
@@ -70,6 +76,18 @@ class _WebViewScreenState extends State<WebViewScreen> {
                   shouldPrintBackgrounds: true,
                   javaScriptCanOpenWindowsAutomatically: true,
                 ),
+                initialUserScripts: UnmodifiableListView<UserScript>([
+                  UserScript(
+                    source: """
+                      window.ReactNativeWebView = {
+                        postMessage: function(data) {
+                          window.flutter_inappwebview.callHandler('onMessage', data);
+                        }
+                      };
+                    """,
+                    injectionTime: UserScriptInjectionTime.AT_DOCUMENT_START,
+                  ),
+                ]),
                 onConsoleMessage: (controller, consoleMessage) {
                   debugPrint("WebView Console: ${consoleMessage.message}");
                 },
@@ -99,6 +117,29 @@ class _WebViewScreenState extends State<WebViewScreen> {
                         _showSnackbar('File downloaded to: ${file.path}');
                       } catch (e) {
                         _showSnackbar('Download failed: $e');
+                      }
+                    },
+                  );
+
+                  controller.addJavaScriptHandler(
+                    handlerName: 'onMessage',
+                    callback: (args) async {
+                      try {
+                        final String message = args[0] as String;
+                        final Map<String, dynamic> data = jsonDecode(message);
+                        
+                        if (data['type'] == 'PRINT_RECEIPT_HTML' && data['html'] != null) {
+                          await Printing.layoutPdf(
+                            onLayout: (PdfPageFormat format) async => await Printing.convertHtml(
+                              format: format,
+                              html: data['html'] as String,
+                            ),
+                          );
+                        } else if (data['type'] == 'EXIT_APP') {
+                          SystemNavigator.pop();
+                        }
+                      } catch (e) {
+                        debugPrint("Error parsing WebView message: $e");
                       }
                     },
                   );

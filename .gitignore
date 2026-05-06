@@ -43,3 +43,9 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Signing related
+android/key.properties
+android/app/*.jks
+**/*.keystore
+**/*.jks
